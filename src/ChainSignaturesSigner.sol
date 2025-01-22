@@ -8,46 +8,70 @@ import {
     PromiseResult,
     PromiseResultStatus,
     PromiseWithCallback
-} from "./AuroraSdk.sol";
+} from "@xcc/AuroraSdk.sol";
+
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
 
 uint64 constant SIGN_NEAR_GAS = 50_000_000_000_000; // 50 Tgas
 uint64 constant SIGN_CALLBACK_NEAR_GAS = 30_000_000_000_000; // 30 Tgas
-uint128 constant ATACH_DEPOSIT = 200_000_000_000_000_000_000_000; // 0.2 NEAR
+uint64 constant SET_GREETING_NEAR_GAS = 2_000_000_000_000; // 2 Tgas
+uint128 constant INIT_DEPOSIT = 2_000_000_000_000_000_000_000_000; // 2 NEAR
 
-contract Signer {
+contract ChainSignaturesSigner is AccessControl {
     using AuroraSdk for NEAR;
     using AuroraSdk for PromiseCreateArgs;
     using AuroraSdk for PromiseWithCallback;
     using AuroraSdk for PromiseResult;
+    using Strings for uint256;
 
-    event signEvent(string result);
+    event SignedEvent(string result);
+
+    bytes32 public constant CALLBACK_ROLE = keccak256("CALLBACK_ROLE");
+    bytes32 public constant OWNER_ROLE = keccak256("OWNER_ROLE");
 
     NEAR public near;
     IERC20 public wNEAR;
     // Sign contract account id on NEAR
     string public signer;
 
-
     constructor(string memory _signer, address _wNEAR) {
         signer = _signer;
         wNEAR = IERC20(_wNEAR);
         near = AuroraSdk.initNear(wNEAR);
+        _grantRole(OWNER_ROLE, msg.sender);
+        _grantRole(CALLBACK_ROLE, AuroraSdk.nearRepresentitiveImplicitAddress(address(this)));
     }
 
-    function sign(string memory payload, string memory path, uint256 version) public payable {
-        wNEAR.transferFrom(msg.sender, address(this), ATACH_DEPOSIT);
+    function init() public onlyRole(OWNER_ROLE) {
+        // Make a cross-contract call to trigger sub-account creation.
+        bytes memory data = abi.encodePacked('{\"greeting\":\"Hello from Signer!\"}');
+        PromiseCreateArgs memory initCall = near.call("hello.near-examples.testnet", "set_greeting", data, 0, SET_GREETING_NEAR_GAS);
+        initCall.transact();
+    }
+
+    function addressToString(address addr) public pure returns (string memory) {
+        string memory addrStr = Strings.toHexString(uint256(uint160(addr)), 20);
+        return addrStr;
+    }
+
+    function sign(string memory payload, uint256 version, uint128 attachedNear) public {
         bytes memory _data = hexStringToBytes(payload);
         require(_data.length == 32, "Payload must be 32 bytes");
+
+        // path is fixed here to make sure only msg.sender can use the derived 
+        // address via chain signature's of the xcc sub-account
+        string memory path = addressToString(msg.sender);
         bytes memory data = createData(_data, path, version);
-        PromiseCreateArgs memory callSign = near.call(signer, "sign", data, ATACH_DEPOSIT,  SIGN_NEAR_GAS);
+
+        PromiseCreateArgs memory callSign = near.call(signer, "sign", data, attachedNear,  SIGN_NEAR_GAS);
         PromiseCreateArgs memory callback = near.auroraCall(address(this), abi.encodeWithSelector(this.signCallback.selector), 0, SIGN_CALLBACK_NEAR_GAS);
 
         callSign.then(callback).transact();
     }
 
-    function signCallback() public {
+    function signCallback() public onlyRole(CALLBACK_ROLE) {
         PromiseResult memory result = AuroraSdk.promiseResult(0);
 
         if (result.status != PromiseResultStatus.Successful) {
@@ -55,14 +79,14 @@ contract Signer {
         }
 
         string memory output = string(result.output);
-        emit signEvent(output);
+        emit SignedEvent(output);
     }
 
     function getSigner() view public returns (string memory) {
         return signer;
     }
 
-    function setSigner(string memory _signer) public {
+    function setSigner(string memory _signer) public onlyRole(OWNER_ROLE) {
         signer = _signer;
     }
 
