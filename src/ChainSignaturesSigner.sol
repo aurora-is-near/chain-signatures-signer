@@ -26,6 +26,7 @@ contract ChainSignaturesSigner is AccessControl {
     using AuroraSdk for PromiseResult;
     using Strings for uint256;
 
+    event DebugEvent(string result);
     event SignedEvent(string result);
 
     bytes32 public constant CALLBACK_ROLE = keccak256("CALLBACK_ROLE");
