@@ -19,6 +19,9 @@ Right now we have two such signers deployed:
 
 You can use these or deploy your own one.
 
+
+The ABI is inside `signer_abi.json` file. Just use it. Or extract it via Explorer.
+
 ## How it works? 
 
 The contract works by using the XCC to communicate with NEAR via its subaccount. You can read more about it in the [XCC Docs](https://doc.aurora.dev/xcc/aurora-to-near/introduction).
